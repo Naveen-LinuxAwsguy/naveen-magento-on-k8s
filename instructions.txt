@@ -1,0 +1,106 @@
+### CREATE A NETWORK ###
+docker network create  --subnet=172.18.0.0/16 magento
+
+
+### CREATE MYSQL ###
+docker volume create mysql
+
+docker run -d --name mysql -v mysql:/var/lib/mysql -e MYSQL_DATABASE=magento -e MYSQL_ROOT_PASSWORD=keepitsecret --network=magento --ip 172.18.0.10 --restart always -d mysql:8.0
+
+
+### CREATE ELASTICSEARCH ###
+docker volume create elasticsearch
+
+docker run -d --name elasticsearch --network=magento --ip 172.18.0.11 -v elasticsearch:/usr/share/elasticsearch -e "discovery.type=single-node" -e "xpack.security.enabled=true" -e ELASTIC_PASSWORD=keepitsecret --restart always elasticsearch:7.16.1
+
+
+### CREATE REDIS ###
+docker run -d --network=magento --ip 172.18.0.12 --name redis --restart always redis:6.2
+
+
+### CREATE RABBITMQ ###
+docker volume create rabbitmq
+
+docker run -d --network=magento --ip 172.18.0.13 --name rabbitmq -v rabbitmq:/var/lib/rabbitmq --restart always rabbitmq:3.9
+
+
+### RUN MAGENTO ###
+
+*** REPLACE config/auth.json file with your magento auth.json file. ***
+docker build -t whyxn/magento-k8s:2.4.4-v2 .
+docker run -d --network=magento -p 8080:8080 --name magento --restart always whyxn/magento-k8s:2.4.4-v2
+
+
+### CREATE VARNISH ###
+docker run -d --network=magento --ip 172.18.0.14 --name varnish --restart always -p 8080:80 whyxn/varnish-magento:7.0 
+
+
+### INSTALL DEPENDENCIES ###
+composer install --no-interaction
+
+
+### INSTALL MAGENTO ###
+php bin/magento setup:install \
+	--admin-firstname=Magento \
+	--admin-lastname=Admin \
+	--admin-email=admin.magento@gmail.com \
+	--admin-user=admin \
+	--admin-password='SomePassword123' \
+	--base-url=http://148.251.11.4:8080 \
+	--backend-frontname=admin \
+	--db-host=mysql:3306 \
+	--db-name=magento \
+	--db-user=root \
+	--db-password=keepitsecret \
+	--use-rewrites=1 \
+	--language=en_US \
+	--currency=USD \
+	--session-save=redis \
+	--session-save-redis-host=redis \
+	--session-save-redis-port=6379 \
+	--session-save-redis-persistent-id=db0 \
+	--cache-backend=redis \
+	--cache-backend-redis-server=redis \
+	--cache-backend-redis-port=6379 \
+	--cache-backend-redis-db=db1 \
+	--search-engine=elasticsearch7 \
+	--elasticsearch-host=elasticsearch \
+	--elasticsearch-port=9200 \
+	--elasticsearch-enable-auth=1 \
+	--elasticsearch-username=elastic \
+	--elasticsearch-password=keepitsecret \
+	--amqp-host=rabbitmq \
+	--amqp-port=5672 \
+	--amqp-user=guest \
+	--amqp-password='guest' \
+	--amqp-virtualhost='/'
+
+
+### ENABLE / DISABLE MAINTAINANCE MODE
+php bin/magento maintenance:enable
+php bin/magento maintenance:disable
+
+
+### COMPILE ###
+php bin/magento setup:di:compile
+
+
+### DEPLOY STATIC CONTENTS ###
+php bin/magento setup:static-content:deploy -f
+
+
+### RUN INDEX CRON ###
+php bin/magento cron:run --group index
+
+
+### GIVE PERMISSION ###
+chmod -R 777 $APP_HOME/.
+
+
+### CHANGE DEPLOY MODE ###
+bin/magento deploy:mode:show
+bin/magento deploy:mode:set production
+bin/magento deploy:mode:set develop
+
+
+### ENJOY ###
